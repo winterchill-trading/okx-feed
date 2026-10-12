@@ -167,3 +167,9 @@ Symbols are OKX `instId`s, used unchanged as `Market_data.Symbol`s
   replaced when OKX actually closes it.
 - The gap resubscription path is covered by tests but was not observed live
   (no gap occurred).
+
+## CI
+
+CI installs the pinned siblings and the opam dependencies through the shared
+[ox-setup](https://github.com/winterchill-trading/infra/blob/main/docs/ci.md) action, which
+caches the built opam switch between runs.
