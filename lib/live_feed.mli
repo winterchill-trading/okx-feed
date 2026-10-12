@@ -9,7 +9,9 @@
     - [L2]: [books] (400 levels, snapshot then 100 ms deltas, sequenced by
       [seqId]/[prevSeqId])
     - [Funding]: [funding-rate] and [mark-price] of the symbol plus [index-tickers] of its
-      index, merged by {!Normalizer}
+      index, merged by {!Normalizer}; only for perpetual swaps (symbols ending in
+      [-SWAP]). A stream with no channel for the given symbols opens no connection and its
+      pipe stays empty.
 
     The connection sends the text frame [ping] every 20 s (OKX drops connections silent
     for 30 s) and is replaced after two silent intervals. On every (re)connect all the
@@ -33,5 +35,6 @@ val create
   -> Market_data.Feed.t Deferred.t
 
 (** The subscriptions of a stream, e.g. [Funding] for [BTC-USDT-SWAP] is [funding-rate]
-    and [mark-price] on [BTC-USDT-SWAP] and [index-tickers] on [BTC-USDT]. *)
+    and [mark-price] on [BTC-USDT-SWAP] and [index-tickers] on [BTC-USDT]; [Funding]
+    ignores symbols that are not perpetual swaps. *)
 val args : Market_data.Stream.t -> symbols:string list -> Wire.Arg.t list

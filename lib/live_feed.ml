@@ -12,6 +12,8 @@ let args (stream : Md.Stream.t) ~symbols =
   | Bbo -> on Wire.bbo_tbt
   | L2 -> on Wire.books
   | Funding ->
+    let symbols = List.filter symbols ~f:(String.is_suffix ~suffix:"-SWAP") in
+    let on channel = List.map symbols ~f:(fun inst_id -> { Wire.Arg.channel; inst_id }) in
     on Wire.funding_rate
     @ on Wire.mark_price
     @ List.map
@@ -36,10 +38,9 @@ let create ?on_raw (config : Config.t) ~symbols ~streams =
     | L2 x -> Pipe.write_without_pushback_if_open l2_w x
     | Funding x -> Pipe.write_without_pushback_if_open funding_w x
   in
-  let connect stream =
+  let connect stream args =
     let name = Md.Stream.to_string stream in
     let normalizer = Normalizer.create () in
-    let args = args stream ~symbols in
     let on_connect ws =
       if Ws.reconnects ws > 0
       then (
@@ -83,8 +84,15 @@ let create ?on_raw (config : Config.t) ~symbols ~streams =
     match%bind
       Monitor.try_with (fun () ->
         Deferred.List.iter streams ~how:`Sequential ~f:(fun stream ->
-          let%map ws = connect stream in
-          opened := ws :: !opened))
+          match args stream ~symbols with
+          | [] ->
+            Log.Global.info
+              "okx feed: no channel for %s on these symbols, not connecting"
+              (Md.Stream.to_string stream);
+            return ()
+          | args ->
+            let%map ws = connect stream args in
+            opened := ws :: !opened))
     with
     | Ok () -> return ()
     | Error exn ->
