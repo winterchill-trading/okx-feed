@@ -1,0 +1,27 @@
+(executable
+ (name main)
+ (libraries core core_unix.command_unix core_bench okx-feed)
+ (preprocess
+  (pps ppx_jane)))
+
+; The recorded raw minutes from test/fixtures, embedded as strings.
+
+(rule
+ (target frames.ml)
+ (deps
+  (glob_files_rec ../test/fixtures/raw/okx/**.ndjson))
+ (action
+  (with-stdout-to
+   frames.ml
+   (progn
+    (echo "let trades = {raw|")
+    (cat
+     ../test/fixtures/raw/okx/trades/BTC-USDT-SWAP/2026/10/12/16-53.ndjson)
+    (echo "|raw}\nlet bbo = {raw|")
+    (cat ../test/fixtures/raw/okx/bbo/BTC-USDT-SWAP/2026/10/12/16-53.ndjson)
+    (echo "|raw}\nlet l2 = {raw|")
+    (cat ../test/fixtures/raw/okx/l2/BTC-USDT-SWAP/2026/10/12/16-53.ndjson)
+    (echo "|raw}\nlet funding = {raw|")
+    (cat
+     ../test/fixtures/raw/okx/funding/BTC-USDT-SWAP/2026/10/12/16-53.ndjson)
+    (echo "|raw}\n")))))

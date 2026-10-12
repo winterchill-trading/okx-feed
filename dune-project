@@ -27,6 +27,7 @@
   venue-net
   market-data
   ppx_jane
+  (core_bench :with-test)
   ppx_yojson_conv
   yojson
   uri))
