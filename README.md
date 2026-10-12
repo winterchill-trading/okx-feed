@@ -13,6 +13,8 @@ funding) as a `Market_data.Feed.t`. No API keys, no order entry.
   frames that did not decode (or were OKX error events) and reconnections.
   `time_source` (default the wall clock) stamps `recv_ts` and drives the
   keepalive and reconnection delays, so tests can run on a synthetic clock.
+  `Live_feed.feed_with_gaps` is the same feed with a `gaps` pipe of
+  `Market_data.Gap.t` (see [Reconnects and gaps](#reconnects-and-gaps)).
 - `Okx_feed.Md_normalizer`: the normalizer as a `Market_data.Normalizer.S`,
   for rebuilding `norm/` event logs from recorded raw minutes with
   `Market_data.Rebuild_norm.run ~normalizers:[ Okx_feed.Md_normalizer.normalizer ]`
@@ -146,8 +148,46 @@ Symbols are OKX `instId`s, used unchanged as `Market_data.Symbol`s
 - Funding: emitted once rate, mark and index are all known, then whenever one
   of them changes (mostly on mark or index moves, every few hundred ms).
   `next_funding_time` is OKX's `fundingTime`, the end of the current period.
+- `feed_with_gaps` reports breaks as `Market_data.Gap.t`s, all with reason
+  `Resync`, `venue = Okx` and the stream set: one per reconnect of a stream's
+  socket (`instrument = None`, every symbol of that connection) and one per L2
+  sequence gap (`instrument` set). A gap is written before any event of the new
+  connection, or before the new snapshot, and is stamped from `time_source`.
+  `feed` is the same feed without that pipe.
 - Undecodable frames and OKX `error` events (e.g. `60018` for an unknown
   `instId`) are logged and skipped.
+
+## Reconnects and gaps
+
+The public endpoint has no replay: nothing OKX sends between the old socket's
+last frame and the new socket's subscription is ever delivered. The window is
+
+1. detection: immediate on a close or reset; a half-open socket is replaced
+   after two silent 20 s ping intervals, so 40 to 60 s after its last frame;
+2. backoff: 0.5 s with 20% jitter for the first attempt (0.4 to 0.6 s),
+   doubling up to 30 s while attempts fail;
+3. connect, TLS and the subscribe round trip.
+
+What the window costs per stream:
+
+| Stream | Lost | Recovered by |
+| --- | --- | --- |
+| `trades` | every print in the window, for good | nothing (no history on subscribe) |
+| `bbo` | intermediate top-of-book changes | the next `bbo-tbt` push (each is a full top of book, about 28 a second) |
+| `l2` | intermediate deltas | the `books` snapshot sent on subscribe |
+| `funding` | intermediate rate, mark and index changes | the first record once rate, mark and index are all known again: `funding-rate` pushes right after the subscription, `mark-price` within 10 s, `index-tickers` within a minute when the index does not move |
+
+Measured on the synthetic clock (`test/test_live_feed.ml`, loopback server,
+socket dropped at t = 0): no connection is opened before 0.39 s; by 0.6 s the
+client has reconnected and resubscribed (`connections 2`, `reconnects 1`), the
+`Resync` gap (stream `trades`, no instrument) is already in the `gaps` pipe,
+stamped 0.600 s, and the first trade of the new socket is stamped
+`recv_ts` = 0.600 s. Frames pushed to the old socket after the drop are not
+delivered. An L2 sequence gap (`prevSeqId` 12 after `seqId` 10) costs one more
+round trip: the client sends `unsubscribe` then `subscribe` for that channel,
+drops the deltas in between, and the gap (instrument `okx:BTC-USDT-SWAP`,
+stream `l2`) is stamped with the frame that broke the sequence and read before
+the new `Snapshot`.
 
 ## Limitations
 
