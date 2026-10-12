@@ -49,7 +49,13 @@ let stats t : Stats.t =
 
 let feed t = t.feed
 
-let start ?on_raw (config : Config.t) ~symbols ~streams =
+let start
+  ?on_raw
+  ?(time_source = Time_source.wall_clock ())
+  (config : Config.t)
+  ~symbols
+  ~streams
+  =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then raise_s [%message "Live_feed.create: the private stream is not a market feed"];
@@ -106,13 +112,14 @@ let start ?on_raw (config : Config.t) ~symbols ~streams =
         ~ping:(`Text ("ping", ping_interval))
         ~on_connect
         ~log_name:("okx feed " ^ name)
+        ~time_source
         ~url:config.url
         ()
       >>| Or_error.ok_exn
     in
     don't_wait_for
       (Pipe.iter_without_pushback (Ws.messages ws) ~f:(fun frame ->
-         let recv_ts = Time_ns.now () in
+         let recv_ts = Time_source.now time_source in
          t.frames <- t.frames + 1;
          Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
          match Normalizer.frame normalizer ~recv_ts frame with
@@ -151,6 +158,6 @@ let start ?on_raw (config : Config.t) ~symbols ~streams =
   return t
 ;;
 
-let create ?on_raw config ~symbols ~streams =
-  start ?on_raw config ~symbols ~streams >>| feed
+let create ?on_raw ?time_source config ~symbols ~streams =
+  start ?on_raw ?time_source config ~symbols ~streams >>| feed
 ;;

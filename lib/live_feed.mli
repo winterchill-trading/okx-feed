@@ -19,9 +19,11 @@
     reconnect yields a fresh [Snapshot]. A book sequence gap unsubscribes and resubscribes
     that channel. Frames that do not decode, and OKX error events, are logged and skipped.
 
-    [recv_ts] is [Time_ns.now ()] when the frame is received; [on_raw] gets that frame
-    unparsed, first, including acks and pongs. Pipes of streams that were not requested
-    stay empty until [close]. Writes do not wait for readers. *)
+    [recv_ts] is the time when the frame is received; [on_raw] gets that frame unparsed,
+    first, including acks and pongs. [time_source] (default the wall clock) stamps
+    [recv_ts] and drives the keepalive, the silence watchdog and the reconnection delay,
+    so tests can step them. Pipes of streams that were not requested stay empty until
+    [close]. Writes do not wait for readers. *)
 
 open! Core
 open Async
@@ -29,6 +31,7 @@ open Async
 (** Raises if a first connection fails, or if [streams] contains [Private]. *)
 val create
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
@@ -40,6 +43,7 @@ type t
 (** Like {!create}, keeping the handle for {!stats}. *)
 val start
   :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> ?time_source:Time_source.t
   -> Config.t
   -> symbols:string list
   -> streams:Market_data.Stream.t list
