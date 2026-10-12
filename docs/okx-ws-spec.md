@@ -202,5 +202,3 @@ once a minute.
 - `mark-price` pushes every 200 ms while the mark moves; `index-tickers` every
   few hundred ms.
 - `bbo-tbt` produced about 28 messages a second, `trades` about 6.
-- Closing the socket from the client side is reported by the server as a TCP
-  close without a websocket Close frame.
