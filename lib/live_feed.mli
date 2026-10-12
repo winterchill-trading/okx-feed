@@ -19,6 +19,13 @@
     reconnect yields a fresh [Snapshot]. A book sequence gap unsubscribes and resubscribes
     that channel. Frames that do not decode, and OKX error events, are logged and skipped.
 
+    Breaks are reported on {!feed_with_gaps}'s [gaps] pipe, always with reason [Resync],
+    [venue = Okx] and the stream set:
+    - a reconnect of a stream's socket: [instrument = None] (every symbol of that
+      connection), written before any event of the new connection;
+    - an L2 sequence gap that resubscribes a channel: [instrument] set, written before the
+      new snapshot.
+
     [recv_ts] is the time when the frame is received; [on_raw] gets that frame unparsed,
     first, including acks and pongs. [time_source] (default the wall clock) stamps
     [recv_ts] and drives the keepalive, the silence watchdog and the reconnection delay,
@@ -50,6 +57,9 @@ val start
   -> t Deferred.t
 
 val feed : t -> Market_data.Feed.t
+
+(** The same feed with its [gaps] pipe (see above). *)
+val feed_with_gaps : t -> Market_data.Feed.With_gaps.t
 
 module Stats : sig
   type t =

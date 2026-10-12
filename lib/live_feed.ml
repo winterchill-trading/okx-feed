@@ -25,7 +25,7 @@ let args (stream : Md.Stream.t) ~symbols =
 ;;
 
 type t =
-  { feed : Md.Feed.t
+  { feed : Md.Feed.With_gaps.t
   ; mutable frames : int
   ; mutable parse_errors : int
   ; sockets : Ws.t list ref
@@ -47,7 +47,8 @@ let stats t : Stats.t =
   }
 ;;
 
-let feed t = t.feed
+let feed t = Md.Feed.With_gaps.to_feed t.feed
+let feed_with_gaps t = t.feed
 
 let start
   ?on_raw
@@ -63,6 +64,12 @@ let start
   let bbo_r, bbo_w = Pipe.create () in
   let l2_r, l2_w = Pipe.create () in
   let funding_r, funding_w = Pipe.create () in
+  let gaps_r, gaps_w = Pipe.create () in
+  let gap ~recv_ts ~stream ?instrument () =
+    Pipe.write_without_pushback_if_open
+      gaps_w
+      { Md.Gap.recv_ts; venue = Okx; instrument; stream = Some stream; reason = Resync }
+  in
   let emit : Md.Event.t -> unit = function
     | Trade x -> Pipe.write_without_pushback_if_open trades_w x
     | Bbo x -> Pipe.write_without_pushback_if_open bbo_w x
@@ -77,7 +84,8 @@ let start
       Pipe.close trades_w;
       Pipe.close bbo_w;
       Pipe.close l2_w;
-      Pipe.close funding_w)
+      Pipe.close funding_w;
+      Pipe.close gaps_w)
   in
   let t =
     { feed =
@@ -86,8 +94,9 @@ let start
           let bbo = bbo_r
           let l2 = l2_r
           let funding = funding_r
+          let gaps = gaps_r
           let close () = Lazy_deferred.force_exn closed
-        end : Md.Feed.S)
+        end : Md.Feed.With_gaps.S)
     ; frames = 0
     ; parse_errors = 0
     ; sockets
@@ -96,11 +105,22 @@ let start
   let connect stream args =
     let name = Md.Stream.to_string stream in
     let normalizer = Normalizer.create () in
-    let on_connect ws =
-      if Ws.reconnects ws > 0
+    (* Reconnects already reported as a gap. [on_connect] runs before the new connection's
+       frames are delivered; the frame handler checks too, so whichever runs first reports
+       the gap and it always precedes the new connection's events. *)
+    let reported = ref 0 in
+    let report_reconnect ws ~recv_ts =
+      let reconnects = Ws.reconnects ws in
+      if reconnects > !reported
       then (
-        Log.Global.info "okx feed: %s reconnected, resubscribing" name;
-        Normalizer.reset normalizer);
+        reported := reconnects;
+        Normalizer.reset normalizer;
+        gap ~recv_ts ~stream ())
+    in
+    let on_connect ws =
+      if Ws.reconnects ws > !reported
+      then Log.Global.info "okx feed: %s reconnected, resubscribing" name;
+      report_reconnect ws ~recv_ts:(Time_source.now time_source);
       Ws.send ws (Wire.Request.to_string Subscribe args)
     in
     let resubscribe ws arg =
@@ -121,6 +141,7 @@ let start
       (Pipe.iter_without_pushback (Ws.messages ws) ~f:(fun frame ->
          let recv_ts = Time_source.now time_source in
          t.frames <- t.frames + 1;
+         report_reconnect ws ~recv_ts;
          Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
          match Normalizer.frame normalizer ~recv_ts frame with
          | Error error ->
@@ -133,7 +154,9 @@ let start
                  (error : Error.t)]
          | Ok { events; resubscribe = args } ->
            List.iter events ~f:emit;
-           List.iter args ~f:(fun arg -> don't_wait_for (resubscribe ws arg))));
+           List.iter args ~f:(fun (arg : Wire.Arg.t) ->
+             gap ~recv_ts ~stream ~instrument:(Normalizer.instrument arg.inst_id) ();
+             don't_wait_for (resubscribe ws arg))));
     ws
   in
   let%bind () =
