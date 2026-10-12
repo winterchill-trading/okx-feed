@@ -3,6 +3,6 @@
  (inline_tests
   (flags
    (:standard -source-tree-root .)))
- (libraries core async okx-feed market-data)
+ (libraries core async uri okx-feed market-data)
  (preprocess
   (pps ppx_jane)))
