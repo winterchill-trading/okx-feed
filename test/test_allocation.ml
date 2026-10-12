@@ -1,0 +1,78 @@
+(* Minor words allocated per Live_feed message: what [Normalizer.frame] (JSON decode plus
+   conversion, the work [Live_feed] does per websocket frame) allocates on the recorded
+   mainnet minute. The timing benchmark is in bench/.
+
+   Counts differ by a few words between macOS and Linux CI, so each is printed as the
+   pinned value when it is within [tolerance] of it, and as the measured value otherwise. *)
+
+open! Core
+open Okx_feed
+
+let words f =
+  let before = Gc.minor_words () in
+  f ();
+  Gc.minor_words () - before
+;;
+
+(* Within 2% (at least 8 words) of [expected] prints as [~expected]. *)
+let approx ~expected actual =
+  let tolerance = Int.max 8 (expected / 50) in
+  if abs (actual - expected) <= tolerance
+  then sprintf "~%d" expected
+  else sprintf "%d (pinned %d +/- %d)" actual expected tolerance
+;;
+
+let%expect_test "approx" =
+  print_endline (approx ~expected:400 405);
+  print_endline (approx ~expected:400 420);
+  print_endline (approx ~expected:30_000 30_500);
+  [%expect {|
+    ~400
+    420 (pinned 400 +/- 8)
+    ~30000
+    |}]
+;;
+
+let measure stream =
+  let t = Normalizer.create () in
+  let per_frame =
+    List.map (Fixture.frames stream) ~f:(fun frame ->
+      ( words (fun () ->
+          ignore
+            (Sys.opaque_identity (Normalizer.frame t ~recv_ts:Time_ns.epoch frame)
+             : Normalizer.Output.t Or_error.t))
+      , String.length frame ))
+  in
+  let n = List.length per_frame in
+  let total = List.sum (module Int) per_frame ~f:fst in
+  let bytes = List.sum (module Int) per_frame ~f:snd in
+  let max = List.fold per_frame ~init:0 ~f:(fun acc (w, _) -> Int.max acc w) in
+  n, total / n, max, bytes / n
+;;
+
+let%expect_test "minor words per Live_feed message" =
+  List.iter
+    Market_data.Stream.
+      [ Trades, (427, 431); Bbo, (528, 534); L2, (9998, 114688); Funding, (396, 624) ]
+    ~f:(fun (stream, (per_frame, max_words)) ->
+      let frames, words, max, bytes = measure stream in
+      print_s
+        [%message
+          ""
+            (stream : Market_data.Stream.t)
+            (frames : int)
+            ~words_per_frame:(approx ~expected:per_frame words : string)
+            ~max_words:(approx ~expected:max_words max : string)
+            ~bytes_per_frame:(bytes : int)]);
+  [%expect
+    {|
+    ((stream Trades) (frames 150) (words_per_frame ~427) (max_words ~431)
+     (bytes_per_frame 218))
+    ((stream Bbo) (frames 250) (words_per_frame ~528) (max_words ~534)
+     (bytes_per_frame 183))
+    ((stream L2) (frames 60) (words_per_frame ~9998) (max_words ~114688)
+     (bytes_per_frame 2322))
+    ((stream Funding) (frames 122) (words_per_frame ~396) (max_words ~624)
+     (bytes_per_frame 185))
+    |}]
+;;
