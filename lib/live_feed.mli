@@ -34,6 +34,31 @@ val create
   -> streams:Market_data.Stream.t list
   -> Market_data.Feed.t Deferred.t
 
+(** A running feed with its counters. *)
+type t
+
+(** Like {!create}, keeping the handle for {!stats}. *)
+val start
+  :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+  -> Config.t
+  -> symbols:string list
+  -> streams:Market_data.Stream.t list
+  -> t Deferred.t
+
+val feed : t -> Market_data.Feed.t
+
+module Stats : sig
+  type t =
+    { frames : int (** websocket text frames received, acks and pongs included *)
+    ; parse_errors : int
+    (** frames that did not decode, or were OKX error events, and were skipped *)
+    ; reconnects : int (** successful reconnections, summed over the connections *)
+    }
+  [@@deriving sexp_of]
+end
+
+val stats : t -> Stats.t
+
 (** The subscriptions of a stream, e.g. [Funding] for [BTC-USDT-SWAP] is [funding-rate]
     and [mark-price] on [BTC-USDT-SWAP] and [index-tickers] on [BTC-USDT]; [Funding]
     ignores symbols that are not perpetual swaps. *)

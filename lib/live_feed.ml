@@ -24,7 +24,32 @@ let args (stream : Md.Stream.t) ~symbols =
   | Private -> raise_s [%message "Live_feed: no public channel for the private stream"]
 ;;
 
-let create ?on_raw (config : Config.t) ~symbols ~streams =
+type t =
+  { feed : Md.Feed.t
+  ; mutable frames : int
+  ; mutable parse_errors : int
+  ; sockets : Ws.t list ref
+  }
+
+module Stats = struct
+  type t =
+    { frames : int
+    ; parse_errors : int
+    ; reconnects : int
+    }
+  [@@deriving sexp_of]
+end
+
+let stats t : Stats.t =
+  { frames = t.frames
+  ; parse_errors = t.parse_errors
+  ; reconnects = List.sum (module Int) !(t.sockets) ~f:Ws.reconnects
+  }
+;;
+
+let feed t = t.feed
+
+let start ?on_raw (config : Config.t) ~symbols ~streams =
   let streams = List.dedup_and_sort streams ~compare:Md.Stream.compare in
   if List.mem streams Private ~equal:Md.Stream.equal
   then raise_s [%message "Live_feed.create: the private stream is not a market feed"];
@@ -37,6 +62,30 @@ let create ?on_raw (config : Config.t) ~symbols ~streams =
     | Bbo x -> Pipe.write_without_pushback_if_open bbo_w x
     | L2 x -> Pipe.write_without_pushback_if_open l2_w x
     | Funding x -> Pipe.write_without_pushback_if_open funding_w x
+  in
+  let sockets = ref [] in
+  let close_all () = Deferred.List.iter !sockets ~how:`Parallel ~f:Ws.close in
+  let closed =
+    Lazy_deferred.create (fun () ->
+      let%map () = close_all () in
+      Pipe.close trades_w;
+      Pipe.close bbo_w;
+      Pipe.close l2_w;
+      Pipe.close funding_w)
+  in
+  let t =
+    { feed =
+        (module struct
+          let trades = trades_r
+          let bbo = bbo_r
+          let l2 = l2_r
+          let funding = funding_r
+          let close () = Lazy_deferred.force_exn closed
+        end : Md.Feed.S)
+    ; frames = 0
+    ; parse_errors = 0
+    ; sockets
+    }
   in
   let connect stream args =
     let name = Md.Stream.to_string stream in
@@ -64,9 +113,11 @@ let create ?on_raw (config : Config.t) ~symbols ~streams =
     don't_wait_for
       (Pipe.iter_without_pushback (Ws.messages ws) ~f:(fun frame ->
          let recv_ts = Time_ns.now () in
+         t.frames <- t.frames + 1;
          Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
          match Normalizer.frame normalizer ~recv_ts frame with
          | Error error ->
+           t.parse_errors <- t.parse_errors + 1;
            Log.Global.error_s
              [%message
                "okx feed: cannot use frame"
@@ -78,8 +129,6 @@ let create ?on_raw (config : Config.t) ~symbols ~streams =
            List.iter args ~f:(fun arg -> don't_wait_for (resubscribe ws arg))));
     ws
   in
-  let opened = ref [] in
-  let close_all () = Deferred.List.iter !opened ~how:`Parallel ~f:Ws.close in
   let%bind () =
     match%bind
       Monitor.try_with (fun () ->
@@ -92,27 +141,16 @@ let create ?on_raw (config : Config.t) ~symbols ~streams =
             return ()
           | args ->
             let%map ws = connect stream args in
-            opened := ws :: !opened))
+            sockets := ws :: !sockets))
     with
     | Ok () -> return ()
     | Error exn ->
       let%map () = close_all () in
       raise exn
   in
-  let closed =
-    Lazy_deferred.create (fun () ->
-      let%map () = close_all () in
-      Pipe.close trades_w;
-      Pipe.close bbo_w;
-      Pipe.close l2_w;
-      Pipe.close funding_w)
-  in
-  return
-    (module struct
-      let trades = trades_r
-      let bbo = bbo_r
-      let l2 = l2_r
-      let funding = funding_r
-      let close () = Lazy_deferred.force_exn closed
-    end : Md.Feed.S)
+  return t
+;;
+
+let create ?on_raw config ~symbols ~streams =
+  start ?on_raw config ~symbols ~streams >>| feed
 ;;
