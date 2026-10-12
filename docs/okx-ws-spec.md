@@ -190,3 +190,17 @@ once a minute.
 `instId` is the venue symbol: spot `BTC-USDT`, USDT-margined perpetual
 `BTC-USDT-SWAP`, coin-margined perpetual `BTC-USD-SWAP`, futures
 `BTC-USD-250328`, options `BTC-USD-250328-100000-C`, indexes `BTC-USDT`.
+
+## Observed on mainnet (2026-10-12, `BTC-USDT-SWAP`)
+
+- Each `args` entry is acknowledged by its own `{"event":"subscribe", ...}` message.
+- `books` sends one `snapshot` (400 levels per side) then `update`s about every
+  100 ms; `checksum` is `0` in every message; `seqId` values exceed 2^31
+  (`345495908317`), so they need 63-bit ints.
+- `funding-rate` pushes once right after the subscription, then every 30 to 90 s.
+  It also carries `prevFundingTime`, not in the reference.
+- `mark-price` pushes every 200 ms while the mark moves; `index-tickers` every
+  few hundred ms.
+- `bbo-tbt` produced about 28 messages a second, `trades` about 6.
+- Closing the socket from the client side is reported by the server as a TCP
+  close without a websocket Close frame.
