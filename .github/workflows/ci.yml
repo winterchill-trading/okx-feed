@@ -18,3 +18,5 @@ jobs:
             venue-net https://github.com/winterchill-trading/venue-net.git
       - run: opam exec -- dune build
       - run: opam exec -- dune test
+  obj-magic:
+    uses: winterchill-trading/infra/.github/workflows/obj-magic.yml@main
