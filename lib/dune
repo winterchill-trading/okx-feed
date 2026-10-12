@@ -1,0 +1,6 @@
+(library
+ (name okx_feed)
+ (public_name okx-feed)
+ (libraries core async venue-net market-data yojson uri)
+ (preprocess
+  (pps ppx_jane ppx_yojson_conv)))
