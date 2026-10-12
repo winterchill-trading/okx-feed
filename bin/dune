@@ -1,0 +1,7 @@
+(executable
+ (name okx_feed_cli)
+ (public_name okx-feed)
+ (package okx-feed)
+ (libraries core async core_unix.command_unix okx-feed market-data uri)
+ (preprocess
+  (pps ppx_jane)))
