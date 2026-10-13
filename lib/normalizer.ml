@@ -34,17 +34,27 @@ type t =
   { books : int Wire.Arg.Table.t (** last [seqId] of each synced book *)
   ; swaps : Swap.t String.Table.t
   ; indexes : Md.Price.t String.Table.t
+  ; trade_scan : Scan.trade
+  ; book_scan : Scan.book
+  ; mutable last_instrument : Md.Instrument.t
+  (** the instrument of the last scanned frame, reused while the symbol repeats *)
+  ; mutable last_arg : Wire.Arg.t (** likewise for the book key *)
   }
+
+let instrument symbol = Md.Instrument.create Okx symbol
 
 let create () =
   { books = Wire.Arg.Table.create ()
   ; swaps = String.Table.create ()
   ; indexes = String.Table.create ()
+  ; trade_scan = Scan.create_trade ()
+  ; book_scan = Scan.create_book ()
+  ; last_instrument = instrument ""
+  ; last_arg = { channel = ""; inst_id = "" }
   }
 ;;
 
 let reset t = Hashtbl.clear t.books
-let instrument symbol = Md.Instrument.create Okx symbol
 
 let index_of symbol =
   match String.split symbol ~on:'-' with
@@ -97,17 +107,24 @@ let bbo ~recv_ts (arg : Wire.Arg.t) (book : Wire.Book.t) =
   | _ -> []
 ;;
 
+(* Snapshot levels best first: bids descending, asks ascending. *)
+let sort_bids =
+  List.sort ~compare:(fun (a : Md.L2_update.Level.t) b ->
+    Md.Price.compare b.price a.price)
+;;
+
+let sort_asks =
+  List.sort ~compare:(fun (a : Md.L2_update.Level.t) b ->
+    Md.Price.compare a.price b.price)
+;;
+
 let l2 ~recv_ts (kind : Md.L2_update.Kind.t) (arg : Wire.Arg.t) (book : Wire.Book.t) =
   let bids = List.map book.bids ~f:level
   and asks = List.map book.asks ~f:level in
   let bids, asks =
     match kind with
     | Delta -> bids, asks
-    | Snapshot ->
-      ( List.sort bids ~compare:(fun (a : Md.L2_update.Level.t) b ->
-          Md.Price.compare b.price a.price)
-      , List.sort asks ~compare:(fun (a : Md.L2_update.Level.t) b ->
-          Md.Price.compare a.price b.price) )
+    | Snapshot -> sort_bids bids, sort_asks asks
   in
   Md.Event.L2
     { instrument = instrument arg.inst_id
@@ -119,23 +136,30 @@ let l2 ~recv_ts (kind : Md.L2_update.Kind.t) (arg : Wire.Arg.t) (book : Wire.Boo
     }
 ;;
 
-let sequenced_book t ~recv_ts (push : Wire.Book.t Wire.Push.t) (book : Wire.Book.t) =
-  let arg = push.arg in
-  match push.action, book.seq_id with
+(* Sequencing shared by the Yojson and the scanned path: [l2 kind] builds the event,
+   [no_levels] says whether the update carries any level. *)
+let sequenced
+  t
+  ~(arg : Wire.Arg.t)
+  ~(action : Wire.Action.t option)
+  ~seq_id
+  ~prev_seq_id
+  ~no_levels
+  ~(l2 : Md.L2_update.Kind.t -> Md.Event.t)
+  =
+  match action, seq_id with
   | (None | Some Snapshot), seq_id ->
     Option.iter seq_id ~f:(fun seq -> Hashtbl.set t.books ~key:arg ~data:seq);
-    Output.events [ l2 ~recv_ts Snapshot arg book ]
+    Output.events [ l2 Snapshot ]
   | Some Update, None -> raise_s [%message "book update without seqId"]
   | Some Update, Some seq_id ->
     (match Hashtbl.find t.books arg with
      | None -> Output.empty
      | Some last ->
-       (match book.prev_seq_id with
+       (match prev_seq_id with
         | Some prev when prev = last ->
           Hashtbl.set t.books ~key:arg ~data:seq_id;
-          if List.is_empty book.bids && List.is_empty book.asks
-          then Output.empty
-          else Output.events [ l2 ~recv_ts Delta arg book ]
+          if no_levels then Output.empty else Output.events [ l2 Delta ]
         | prev ->
           Hashtbl.remove t.books arg;
           Async.Log.Global.info_s
@@ -147,6 +171,17 @@ let sequenced_book t ~recv_ts (push : Wire.Book.t Wire.Push.t) (book : Wire.Book
                 ~prev_seq_id:(prev : int option)
                 (seq_id : int)];
           { events = []; resubscribe = [ arg ] }))
+;;
+
+let sequenced_book t ~recv_ts (push : Wire.Book.t Wire.Push.t) (book : Wire.Book.t) =
+  sequenced
+    t
+    ~arg:push.arg
+    ~action:push.action
+    ~seq_id:book.seq_id
+    ~prev_seq_id:book.prev_seq_id
+    ~no_levels:(List.is_empty book.bids && List.is_empty book.asks)
+    ~l2:(fun kind -> l2 ~recv_ts kind push.arg book)
 ;;
 
 let book t ~recv_ts (push : Wire.Book.t Wire.Push.t) =
@@ -239,7 +274,136 @@ let message t ~recv_ts (message : Wire.Message.t) =
     | Index_ticker push -> Ok (Output.events (index_ticker t ~recv_ts push)))
 ;;
 
-let frame t ~recv_ts frame =
+let frame_reference t ~recv_ts frame =
   let%bind.Or_error decoded = Wire.Message.of_string frame in
   message t ~recv_ts decoded
+;;
+
+(* The scanned path: the same events as [frame_reference], built from {!Scan}'s reused
+   records. *)
+
+let time_of_ms ms = Time_ns.of_int_ns_since_epoch (ms * 1_000_000)
+
+let scanned_instrument t s ~pos ~len =
+  if Scan.substring_equal s ~pos ~len (Md.Symbol.to_string t.last_instrument.symbol)
+  then t.last_instrument
+  else (
+    let instrument = instrument (String.sub s ~pos ~len) in
+    t.last_instrument <- instrument;
+    instrument)
+;;
+
+let scanned_arg t s (b : Scan.book) =
+  let last = t.last_arg in
+  if Scan.substring_equal s ~pos:b.channel_pos ~len:b.channel_len last.channel
+     && Scan.substring_equal s ~pos:b.inst_pos ~len:b.inst_len last.inst_id
+  then last
+  else (
+    let arg =
+      { Wire.Arg.channel = String.sub s ~pos:b.channel_pos ~len:b.channel_len
+      ; inst_id = String.sub s ~pos:b.inst_pos ~len:b.inst_len
+      }
+    in
+    t.last_arg <- arg;
+    arg)
+;;
+
+let scanned_trade t ~recv_ts s =
+  let sc = t.trade_scan in
+  Md.Event.Trade
+    { instrument = scanned_instrument t s ~pos:sc.inst_pos ~len:sc.inst_len
+    ; exch_ts = time_of_ms sc.ts
+    ; recv_ts
+    ; price = Md.Price.of_units sc.px
+    ; size = Md.Size.of_units sc.sz
+    ; side = (if sc.buy then Buy else Sell)
+    ; trade_id = String.sub s ~pos:sc.trade_id_pos ~len:sc.trade_id_len
+    }
+;;
+
+let scanned_bbo t ~recv_ts s =
+  let sc = t.book_scan in
+  if sc.asks.n = 0 || sc.bids.n = 0
+  then Output.empty
+  else
+    Output.events
+      [ Md.Event.Bbo
+          { instrument = scanned_instrument t s ~pos:sc.inst_pos ~len:sc.inst_len
+          ; exch_ts = time_of_ms sc.ts
+          ; recv_ts
+          ; bid_price = Md.Price.of_units sc.bids.px.(0)
+          ; bid_size = Md.Size.of_units sc.bids.sz.(0)
+          ; ask_price = Md.Price.of_units sc.asks.px.(0)
+          ; ask_size = Md.Size.of_units sc.asks.sz.(0)
+          }
+      ]
+;;
+
+let scanned_levels (l : Scan.Levels.t) =
+  let mutable acc = [] in
+  for i = l.n - 1 downto 0 do
+    acc
+    <- { Md.L2_update.Level.price = Md.Price.of_units l.px.(i)
+       ; size = Md.Size.of_units l.sz.(i)
+       }
+       :: acc
+  done;
+  acc
+;;
+
+(* Whether [px] is in order ([descending] for bids), so the snapshot sort can be skipped.
+   OKX sends snapshots sorted. *)
+let sorted (l : Scan.Levels.t) ~descending =
+  let mutable ok = true in
+  let mutable i = 1 in
+  while ok && i < l.n do
+    let a = l.px.(i - 1)
+    and b = l.px.(i) in
+    ok <- (if descending then a >= b else a <= b);
+    i <- i + 1
+  done;
+  ok
+;;
+
+let scanned_l2 t ~recv_ts s (kind : Md.L2_update.Kind.t) =
+  let sc = t.book_scan in
+  let bids = scanned_levels sc.bids
+  and asks = scanned_levels sc.asks in
+  let bids, asks =
+    match kind with
+    | Delta -> bids, asks
+    | Snapshot ->
+      ( (if sorted sc.bids ~descending:true then bids else sort_bids bids)
+      , if sorted sc.asks ~descending:false then asks else sort_asks asks )
+  in
+  Md.Event.L2
+    { instrument = scanned_instrument t s ~pos:sc.inst_pos ~len:sc.inst_len
+    ; exch_ts = time_of_ms sc.ts
+    ; recv_ts
+    ; kind
+    ; bids
+    ; asks
+    }
+;;
+
+let scanned_book t ~recv_ts s =
+  let sc = t.book_scan in
+  sequenced
+    t
+    ~arg:(scanned_arg t s sc)
+    ~action:(if sc.snapshot then Some Snapshot else Some Update)
+    ~seq_id:(Some sc.seq_id)
+    ~prev_seq_id:(Some sc.prev_seq_id)
+    ~no_levels:(sc.asks.n = 0 && sc.bids.n = 0)
+    ~l2:(fun kind -> scanned_l2 t ~recv_ts s kind)
+;;
+
+let frame t ~recv_ts frame =
+  if Scan.trade frame t.trade_scan
+  then Ok (Output.events [ scanned_trade t ~recv_ts frame ])
+  else if Scan.bbo frame t.book_scan
+  then Ok (scanned_bbo t ~recv_ts frame)
+  else if Scan.book frame t.book_scan
+  then Ok (scanned_book t ~recv_ts frame)
+  else frame_reference t ~recv_ts frame
 ;;

@@ -49,5 +49,11 @@ val index_of : string -> string
     give {!Output.empty}. *)
 val message : t -> recv_ts:Time_ns.t -> Wire.Message.t -> Output.t Or_error.t
 
-(** {!Wire.Message.of_string} then {!message}. *)
+(** {!Wire.Message.of_string} then {!message}, except that [trades], [bbo-tbt] and
+    sequenced [books] pushes that {!Scan} reads skip the JSON tree and give the same
+    output from the scanned values. *)
 val frame : t -> recv_ts:Time_ns.t -> string -> Output.t Or_error.t
+
+(** {!frame} always through {!Wire.Message.of_string}: the reference the scanned path is
+    tested against. *)
+val frame_reference : t -> recv_ts:Time_ns.t -> string -> Output.t Or_error.t
