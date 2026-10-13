@@ -146,6 +146,31 @@ scanned; acks fall back) and over hand-written sequencing cases (gap, reset,
 heartbeat, unsorted snapshot, several symbols, empty side, unknown side) and
 requires identical output.
 
+### Websocket delivery
+
+`Live_feed` takes frames from `Venue_net.Ws_client` through `on_message`, so
+each frame goes from the connection's frame pipe straight to the normalizer.
+Before, it read `Ws_client.messages` one frame at a time with
+`Pipe.iter_without_pushback`, which costs about 13 words per frame for the
+hop (see venue-net's README); that path is kept as
+`Live_feed.For_testing.start_via_messages`.
+
+`dune exec ./bench/live.exe` writes the recorded trades minute 100 times (15,000
+frames) as pre-encoded websocket frames from the in-process fake server in one
+burst, and counts minor words over the whole receive phase (socket reads,
+framing, delivery, `Normalizer.frame`, pipe writes). arm64, best of 10 runs:
+
+| Build | messages pipe (before) | `on_message` |
+| --- | --- | --- |
+| dev | 655 to 681 ns, 80.6 words | 594 to 606 ns, 67.5 words |
+| release | 655 to 669 ns, 80.6 words | 594 to 606 ns, 67.5 words |
+| release, `OCAMLPARAM='_,O3=1'` | 648 ns, 80.5 words | 584 ns, 67.5 words |
+
+`test/test_delivery.ml` runs both deliveries over every recorded stream and
+requires identical events, gaps and stats, and pins the words per trades
+frame end to end (dev profile, pipes drained after the burst: about 139
+before, 126 now, 13 saved; a few words of slack for Linux CI).
+
 ## Symbol conventions
 
 Symbols are OKX `instId`s, used unchanged as `Market_data.Symbol`s
