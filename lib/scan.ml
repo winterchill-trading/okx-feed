@@ -52,6 +52,7 @@ type book =
   ; mutable prev_seq_id : int
   ; asks : Levels.t
   ; bids : Levels.t
+  ; mutable after : int
   }
 
 let create_trade () =
@@ -77,6 +78,7 @@ let create_book () =
   ; prev_seq_id = 0
   ; asks = Levels.create ()
   ; bids = Levels.create ()
+  ; after = 0
   }
 ;;
 
@@ -280,6 +282,13 @@ let[@zero_alloc] levels s pos (l : Levels.t) =
   if ok then i else -1
 ;;
 
+(* [key] searched from [after] (the previous key: OKX keeps its field order) to the end of
+   the entry, then from the entry start [obj] if the order ever changes. *)
+let[@zero_alloc] next s ~obj ~until ~after key =
+  let at = if after < 0 then -1 else find_key s ~from:after ~until key in
+  if at < 0 then find_key s ~from:obj ~until key else at
+;;
+
 let[@zero_alloc] trade s (t : trade) =
   let p = expect s 0 {|{"arg":{"channel":"trades","instId":"|} in
   if p < 0 || not (plain_shape s)
@@ -291,12 +300,12 @@ let[@zero_alloc] trade s (t : trade) =
     then false
     else (
       let until = String.length s - 3 in
-      let inst = find_key s ~from:obj ~until {|"instId":"|} in
-      let id = find_key s ~from:obj ~until {|"tradeId":"|} in
-      let px = find_key s ~from:obj ~until {|"px":"|} in
-      let sz = find_key s ~from:obj ~until {|"sz":"|} in
-      let side = find_key s ~from:obj ~until {|"side":"|} in
-      let ts = find_key s ~from:obj ~until {|"ts":"|} in
+      let inst = next s ~obj ~until ~after:obj {|"instId":"|} in
+      let id = next s ~obj ~until ~after:inst {|"tradeId":"|} in
+      let px = next s ~obj ~until ~after:id {|"px":"|} in
+      let sz = next s ~obj ~until ~after:px {|"sz":"|} in
+      let side = next s ~obj ~until ~after:sz {|"side":"|} in
+      let ts = next s ~obj ~until ~after:side {|"ts":"|} in
       if inst < 0 || id < 0 || px < 0 || sz < 0 || side < 0 || ts < 0
       then false
       else (
@@ -321,22 +330,24 @@ let[@zero_alloc] trade s (t : trade) =
           true))))
 ;;
 
-(* [asks], [bids] and [ts] of the one entry starting at [obj]. *)
+(* [asks], [bids] and [ts] of the one entry starting at [obj]; [b.after] is left just
+   after [ts]. *)
 let[@zero_alloc] book_entry s ~obj (b : book) =
   let until = String.length s - 3 in
-  let asks = find_key s ~from:obj ~until {|"asks":|} in
-  let bids = find_key s ~from:obj ~until {|"bids":|} in
-  let ts = find_key s ~from:obj ~until {|"ts":"|} in
-  if asks < 0 || bids < 0 || ts < 0
+  let asks = next s ~obj ~until ~after:obj {|"asks":|} in
+  let asks_end = if asks < 0 then -1 else levels s asks b.asks in
+  let bids =
+    if asks_end < 0 then -1 else next s ~obj ~until ~after:asks_end {|"bids":|}
+  in
+  let bids_end = if bids < 0 then -1 else levels s bids b.bids in
+  let ts = if bids_end < 0 then -1 else next s ~obj ~until ~after:bids_end {|"ts":"|} in
+  let ts_value = if ts < 0 then -1 else quoted_int s ts in
+  if ts_value < 0
   then false
   else (
-    let ts = quoted_int s ts in
-    ts >= 0
-    && levels s asks b.asks >= 0
-    && levels s bids b.bids >= 0
-    &&
-    (b.ts <- ts;
-     true))
+    b.ts <- ts_value;
+    b.after <- ts;
+    true)
 ;;
 
 let[@zero_alloc] bbo s (b : book) =
@@ -373,8 +384,8 @@ let[@zero_alloc] book s (b : book) =
     then false
     else (
       let until = String.length s - 3 in
-      let seq = find_key s ~from:obj ~until {|"seqId":|} in
-      let prev = find_key s ~from:obj ~until {|"prevSeqId":|} in
+      let seq = next s ~obj ~until ~after:b.after {|"seqId":|} in
+      let prev = next s ~obj ~until ~after:seq {|"prevSeqId":|} in
       let seq = if seq < 0 then Int.min_value else bare_int s seq in
       let prev = if prev < 0 then Int.min_value else bare_int s prev in
       if seq = Int.min_value || prev = Int.min_value

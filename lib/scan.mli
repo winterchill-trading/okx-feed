@@ -46,6 +46,7 @@ type book =
   ; mutable prev_seq_id : int
   ; asks : Levels.t
   ; bids : Levels.t
+  ; mutable after : int (** scratch: where the next key search starts *)
   }
 
 val create_trade : unit -> trade
