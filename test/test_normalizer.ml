@@ -256,6 +256,32 @@ let%expect_test "funding: rate, mark and index merged" =
     |}]
 ;;
 
+let%expect_test "funding: an index push updates every swap of that index, by symbol" =
+  let t = Normalizer.create () in
+  let for_symbol symbol frame =
+    String.substr_replace_all frame ~pattern:"BTC-USDT-SWAP" ~with_:symbol
+  in
+  List.iter [ "BTC-USDT-SWAP"; "BTC-USDT-250328" ] ~f:(fun symbol ->
+    feed
+      t
+      (for_symbol
+         symbol
+         (funding_rate ~rate:"0.0001" ~time:"1700726400000" ~ts:"1700724675402"));
+    feed t (for_symbol symbol (mark ~px:"42310.6" ~ts:"1700724675500")));
+  feed t (index ~inst_id:"BTC-USDT" ~px:"42300.1" ~ts:"1700724675600");
+  [%expect
+    {|
+    (Funding
+     ((instrument ((venue Okx) (symbol BTC-USDT-250328))) (exch_ts 1700724675600)
+      (recv_ts 1700000000000) (rate 0.0001) (next_funding_time 1700726400000)
+      (mark_price 42310.6) (index_price 42300.1)))
+    (Funding
+     ((instrument ((venue Okx) (symbol BTC-USDT-SWAP))) (exch_ts 1700724675600)
+      (recv_ts 1700000000000) (rate 0.0001) (next_funding_time 1700726400000)
+      (mark_price 42310.6) (index_price 42300.1)))
+    |}]
+;;
+
 let%expect_test "acks, pongs, notices, unknown channels" =
   let t = Normalizer.create () in
   List.iter
