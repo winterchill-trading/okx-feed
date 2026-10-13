@@ -138,8 +138,8 @@ sorting every known swap on each push.
 `[@zero_alloc]` and `test/test_scan.ml` pins 0 words per call.
 `test/test_allocation.ml` pins minor words per message on the recorded
 minute (trades about 22, bbo 18, books 511 on average and 4844 for the
-snapshot, funding 382; the largest trades and bbo message is the subscription
-ack at 209), within 2% because counts differ slightly between macOS and Linux.
+snapshot, funding 375 (369 on Linux, 382 on macOS); the largest trades and
+bbo message is the subscription ack at 209), within 2% because counts differ slightly between macOS and Linux.
 `test/test_scanned_path.ml` runs both paths over every recorded frame (149 of
 150 trades frames, 249 of 250 bbo frames and 59 of 60 books frames are
 scanned; acks fall back) and over hand-written sequencing cases (gap, reset,
