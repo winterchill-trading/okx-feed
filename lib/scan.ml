@@ -5,12 +5,28 @@ let max_levels = 1024
 module Levels = struct
   type t =
     { mutable n : int
-    ; px : int array
-    ; sz : int array
+    ; mutable px : int array
+    ; mutable sz : int array
+    ; mutable full : bool
     }
 
+  (* Small enough to stay in the minor heap; books grow it once. *)
+  let initial_capacity = 8
+
   let create () =
-    { n = 0; px = Array.create ~len:max_levels 0; sz = Array.create ~len:max_levels 0 }
+    { n = 0
+    ; px = Array.create ~len:initial_capacity 0
+    ; sz = Array.create ~len:initial_capacity 0
+    ; full = false
+    }
+  ;;
+
+  let grow t =
+    if Array.length t.px < max_levels
+    then (
+      t.px <- Array.create ~len:max_levels 0;
+      t.sz <- Array.create ~len:max_levels 0);
+    t.full <- false
   ;;
 end
 
@@ -213,6 +229,7 @@ let[@zero_alloc] bare_int s pos =
 let[@zero_alloc] levels s pos (l : Levels.t) =
   let n = String.length s in
   l.n <- 0;
+  l.full <- false;
   let mutable i = pos + 1 in
   let mutable ok = pos >= 0 && pos < n && Char.equal (String.unsafe_get s pos) '[' in
   let mutable fin = false in
@@ -227,8 +244,12 @@ let[@zero_alloc] levels s pos (l : Levels.t) =
     let q = if e1 < 0 then -1 else expect s (e1 + 1) {|,"|} in
     let sz = if q < 0 then -1 else decimal s q in
     let e2 = if sz < 0 then -1 else string_end s q in
-    if e2 < 0 || l.n >= max_levels
+    if e2 < 0
     then ok <- false
+    else if l.n >= Array.length l.px
+    then (
+      l.full <- true;
+      ok <- false)
     else (
       Array.unsafe_set l.px l.n px;
       Array.unsafe_set l.sz l.n sz;
@@ -367,4 +388,11 @@ let[@zero_alloc] book s (b : book) =
         b.seq_id <- seq;
         b.prev_seq_id <- prev;
         true)))
+;;
+
+let full (b : book) = b.asks.full || b.bids.full
+
+let grow (b : book) =
+  Levels.grow b.asks;
+  Levels.grow b.bids
 ;;

@@ -10,14 +10,15 @@
 
 open! Core
 
-(** Number of levels per side a {!book} holds; a side with more falls back. *)
+(** Number of levels per side a {!book} can hold; a side with more falls back. *)
 val max_levels : int
 
 module Levels : sig
   type t = private
     { mutable n : int
-    ; px : int array
-    ; sz : int array
+    ; mutable px : int array
+    ; mutable sz : int array
+    ; mutable full : bool (** the last read stopped at the capacity *)
     }
 
   val create : unit -> t
@@ -48,7 +49,16 @@ type book =
   }
 
 val create_trade : unit -> trade
+
+(** Starts with room for a few levels per side, so a [bbo-tbt] reader stays small. *)
 val create_book : unit -> book
+
+(** Whether {!bbo} or {!book} returned [false] because a side did not fit. *)
+val full : book -> bool
+
+(** Gives both sides room for {!max_levels} levels (a read stops at the first side that
+    does not fit, so the other one may not fit either). *)
+val grow : book -> unit
 
 (** Position just after [key] in [s.[from] .. s.[until - 1]], or [-1]. *)
 val find_key : string -> from:int -> until:int -> string -> int
