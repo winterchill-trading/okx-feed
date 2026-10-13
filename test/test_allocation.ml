@@ -56,6 +56,8 @@ let measure stream =
 ;;
 
 let%expect_test "minor words per Live_feed message" =
+  (* Funding 375 sits between the macOS (382) and Linux (369) counts; [approx]
+     covers both. *)
   List.iter
     Market_data.Stream.
       [ Trades, (22, 209); Bbo, (18, 209); L2, (511, 4844); Funding, (375, 663) ]
