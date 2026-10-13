@@ -14,6 +14,7 @@ let compare_paths frames =
   and reference = Normalizer.create () in
   let trade = Scan.create_trade ()
   and book = Scan.create_book () in
+  Scan.grow book;
   List.fold frames ~init:0 ~f:(fun scanned frame ->
     let recv_ts = Time_ns.epoch in
     let a = Normalizer.frame fast ~recv_ts frame

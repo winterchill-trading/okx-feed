@@ -153,6 +153,7 @@ let%expect_test "minor words per scan" =
   in
   let trade = Scan.create_trade ()
   and book = Scan.create_book () in
+  Scan.grow book;
   let words f =
     let before = Gc.minor_words () in
     let ok = f () in
@@ -165,4 +166,27 @@ let%expect_test "minor words per scan" =
         ~bbo:(words (fun () -> Scan.bbo bbo book) : bool * int)
         ~book:(words (fun () -> Scan.book books book) : bool * int)];
   [%expect {| ((trade (true 0)) (bbo (true 0)) (book (true 0))) |}]
+;;
+
+let%expect_test "a book larger than the scratch grows it once" =
+  let level i = sprintf {|["%d","1","0","1"]|} (100 + i) in
+  let frame =
+    sprintf
+      {|{"arg":{"channel":"books","instId":"X"},"action":"snapshot","data":[{"asks":[%s],"bids":[%s],"ts":"1","seqId":2,"prevSeqId":-1}]}|}
+      (String.concat ~sep:"," (List.init 3 ~f:level))
+      (String.concat ~sep:"," (List.init 20 ~f:level))
+  in
+  let book = Scan.create_book () in
+  let first = Scan.book frame book in
+  let full = Scan.full book in
+  Scan.grow book;
+  let second = Scan.book frame book in
+  print_s
+    [%message
+      (first : bool)
+        (full : bool)
+        (second : bool)
+        ~asks:(book.asks.n : int)
+        ~bids:(book.bids.n : int)];
+  [%expect {| ((first false) (full true) (second true) (asks 3) (bids 20)) |}]
 ;;
