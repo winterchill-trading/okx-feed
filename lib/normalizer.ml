@@ -33,6 +33,8 @@ end
 type t =
   { books : int Wire.Arg.Table.t (** last [seqId] of each synced book *)
   ; swaps : Swap.t String.Table.t
+  ; swaps_by_index : (string * Swap.t) list String.Table.t
+  (** the swaps of each index, sorted by symbol *)
   ; indexes : Md.Price.t String.Table.t
   ; trade_scan : Scan.trade
   ; book_scan : Scan.book
@@ -46,6 +48,7 @@ let instrument symbol = Md.Instrument.create Okx symbol
 let create () =
   { books = Wire.Arg.Table.create ()
   ; swaps = String.Table.create ()
+  ; swaps_by_index = String.Table.create ()
   ; indexes = String.Table.create ()
   ; trade_scan = Scan.create_trade ()
   ; book_scan = Scan.create_book ()
@@ -200,8 +203,17 @@ let book t ~recv_ts (push : Wire.Book.t Wire.Push.t) =
 ;;
 
 let swap t symbol =
-  Hashtbl.find_or_add t.swaps symbol ~default:(fun () ->
-    { Swap.rate = None; mark = None; last = None })
+  match Hashtbl.find t.swaps symbol with
+  | Some swap -> swap
+  | None ->
+    let swap = { Swap.rate = None; mark = None; last = None } in
+    Hashtbl.set t.swaps ~key:symbol ~data:swap;
+    Hashtbl.update t.swaps_by_index (index_of symbol) ~f:(fun swaps ->
+      List.merge
+        (Option.value swaps ~default:[])
+        [ symbol, swap ]
+        ~compare:(fun (a, _) (b, _) -> String.compare a b));
+    swap
 ;;
 
 let funding_of_swap t ~recv_ts ~exch_ts symbol (swap : Swap.t) =
@@ -243,12 +255,11 @@ let mark_price t ~recv_ts (push : Wire.Mark_price.t Wire.Push.t) =
 let index_ticker t ~recv_ts (push : Wire.Index_ticker.t Wire.Push.t) =
   List.concat_map push.data ~f:(fun (i : Wire.Index_ticker.t) ->
     Hashtbl.set t.indexes ~key:i.inst_id ~data:(Md.Price.of_string i.idx_px);
-    Hashtbl.to_alist t.swaps
-    |> List.sort ~compare:(fun (a, _) (b, _) -> String.compare a b)
-    |> List.concat_map ~f:(fun (symbol, swap) ->
-      if String.equal (index_of symbol) i.inst_id
-      then funding_of_swap t ~recv_ts ~exch_ts:(time i.ts) symbol swap
-      else []))
+    match Hashtbl.find t.swaps_by_index i.inst_id with
+    | None -> []
+    | Some swaps ->
+      List.concat_map swaps ~f:(fun (symbol, swap) ->
+        funding_of_swap t ~recv_ts ~exch_ts:(time i.ts) symbol swap))
 ;;
 
 let message t ~recv_ts (message : Wire.Message.t) =
