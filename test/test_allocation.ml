@@ -58,7 +58,7 @@ let measure stream =
 let%expect_test "minor words per Live_feed message" =
   List.iter
     Market_data.Stream.
-      [ Trades, (22, 209); Bbo, (18, 209); L2, (511, 4844); Funding, (382, 663) ]
+      [ Trades, (22, 209); Bbo, (18, 209); L2, (511, 4844); Funding, (375, 663) ]
     ~f:(fun (stream, (per_frame, max_words)) ->
       let frames, words, max, bytes = measure stream in
       print_s
@@ -77,7 +77,7 @@ let%expect_test "minor words per Live_feed message" =
      (bytes_per_frame 183))
     ((stream L2) (frames 60) (words_per_frame ~511) (max_words ~4844)
      (bytes_per_frame 2322))
-    ((stream Funding) (frames 122) (words_per_frame ~382) (max_words ~663)
+    ((stream Funding) (frames 122) (words_per_frame ~375) (max_words ~663)
      (bytes_per_frame 185))
     |}]
 ;;
