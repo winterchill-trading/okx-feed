@@ -4,7 +4,8 @@
    The largest trades and bbo frame is the subscription ack, still decoded with Yojson;
    the largest books frame is the 400-level snapshot (6 words per level for the event's
    lists). Before the scanner: trades 427, bbo 528, books 9998 per frame and 114688 for
-   the snapshot. The timing benchmark is in bench/.
+   the snapshot. Funding was 396 per frame before [index-tickers] stopped sorting every
+   swap per push. The timing benchmark is in bench/.
 
    Counts differ by a few words between macOS and Linux CI, so each is printed as the
    pinned value when it is within [tolerance] of it, and as the measured value otherwise. *)
@@ -57,7 +58,7 @@ let measure stream =
 let%expect_test "minor words per Live_feed message" =
   List.iter
     Market_data.Stream.
-      [ Trades, (22, 209); Bbo, (18, 209); L2, (511, 4844); Funding, (396, 624) ]
+      [ Trades, (22, 209); Bbo, (18, 209); L2, (511, 4844); Funding, (382, 663) ]
     ~f:(fun (stream, (per_frame, max_words)) ->
       let frames, words, max, bytes = measure stream in
       print_s
@@ -76,7 +77,7 @@ let%expect_test "minor words per Live_feed message" =
      (bytes_per_frame 183))
     ((stream L2) (frames 60) (words_per_frame ~511) (max_words ~4844)
      (bytes_per_frame 2322))
-    ((stream Funding) (frames 122) (words_per_frame ~396) (max_words ~624)
+    ((stream Funding) (frames 122) (words_per_frame ~382) (max_words ~663)
      (bytes_per_frame 185))
     |}]
 ;;
