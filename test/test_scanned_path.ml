@@ -1,6 +1,6 @@
 (* [Normalizer.frame] (scanned where [Scan] reads the frame) against
-   [Normalizer.frame_reference] (always Yojson): identical output, frame by frame, on every
-   recorded frame and on hand-written frames covering the sequencing branches. *)
+   [Normalizer.frame_reference] (always Yojson): identical output, frame by frame, on
+   every recorded frame and on hand-written frames covering the sequencing branches. *)
 
 open! Core
 open Okx_feed
@@ -20,7 +20,8 @@ let compare_paths frames =
     and b = Normalizer.frame_reference reference ~recv_ts frame in
     if not (Sexp.equal (sexp_of_outcome a) (sexp_of_outcome b))
     then
-      print_s [%message "paths differ" frame ~scanned:(a : outcome) ~reference:(b : outcome)];
+      print_s
+        [%message "paths differ" frame ~scanned:(a : outcome) ~reference:(b : outcome)];
     if Scan.trade frame trade || Scan.bbo frame book || Scan.book frame book
     then scanned + 1
     else scanned)
@@ -32,7 +33,10 @@ let%expect_test "every recorded frame" =
     let scanned = compare_paths frames in
     print_s
       [%message
-        "" (stream : Market_data.Stream.t) ~frames:(List.length frames : int) (scanned : int)]);
+        ""
+          (stream : Market_data.Stream.t)
+          ~frames:(List.length frames : int)
+          (scanned : int)]);
   [%expect
     {|
     ((stream Trades) (frames 150) (scanned 149))
