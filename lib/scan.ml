@@ -260,10 +260,10 @@ let[@zero_alloc] levels s pos (l : Levels.t) =
 ;;
 
 let[@zero_alloc] trade s (t : trade) =
-  if not (plain_shape s)
+  let p = expect s 0 {|{"arg":{"channel":"trades","instId":"|} in
+  if p < 0 || not (plain_shape s)
   then false
   else (
-    let p = expect s 0 {|{"arg":{"channel":"trades","instId":"|} in
     let e = string_end s p in
     let obj = if e < 0 then -1 else expect s e {|"},"data":[{|} in
     if obj < 0
@@ -319,10 +319,10 @@ let[@zero_alloc] book_entry s ~obj (b : book) =
 ;;
 
 let[@zero_alloc] bbo s (b : book) =
-  if not (plain_shape s)
+  let p = expect s 0 {|{"arg":{"channel":"bbo-tbt","instId":"|} in
+  if p < 0 || not (plain_shape s)
   then false
   else (
-    let p = expect s 0 {|{"arg":{"channel":"bbo-tbt","instId":"|} in
     let e = string_end s p in
     let obj = if e < 0 then -1 else expect s e {|"},"data":[{|} in
     if obj < 0 || not (book_entry s ~obj b)
@@ -336,10 +336,10 @@ let[@zero_alloc] bbo s (b : book) =
 ;;
 
 let[@zero_alloc] book s (b : book) =
-  if not (plain_shape s)
+  let channel = expect s 0 {|{"arg":{"channel":"books|} in
+  if channel < 0 || not (plain_shape s)
   then false
   else (
-    let channel = expect s 0 {|{"arg":{"channel":"books|} in
     let channel_end = string_end s channel in
     let inst = if channel_end < 0 then -1 else expect s channel_end {|","instId":"|} in
     let inst_end = string_end s inst in
