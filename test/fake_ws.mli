@@ -20,6 +20,13 @@ val received : t -> string list
 (** Sends a text frame on the newest connection. *)
 val send : t -> string -> unit
 
+(** [payload] as one websocket text frame from the server, header included. *)
+val encode_text_frame : string -> string
+
+(** Writes already encoded frames (see {!encode_text_frame}) straight to the newest
+    connection's socket, so a burst costs the server almost nothing per frame. *)
+val write_raw : t -> string -> unit
+
 (** Closes the newest connection. *)
 val drop : t -> unit Deferred.t
 

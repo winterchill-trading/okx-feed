@@ -6,6 +6,7 @@ type t =
   ; mutable connections : int
   ; received : string Queue.t
   ; sockets : string Pipe.Writer.t Stack.t
+  ; writers : Writer.t Stack.t
   ; mutable websockets : string Websocket.t list
   }
 
@@ -37,6 +38,7 @@ let handle t reader writer =
   t.websockets <- ws :: t.websockets;
   let from_client, to_client = Websocket.pipes ws in
   Stack.push t.sockets to_client;
+  Stack.push t.writers writer;
   Pipe.iter_without_pushback from_client ~f:(Queue.enqueue t.received)
 ;;
 
@@ -53,6 +55,7 @@ let start () =
     ; connections = 0
     ; received = Queue.create ()
     ; sockets = Stack.create ()
+    ; writers = Stack.create ()
     ; websockets = []
     }
   in
@@ -74,6 +77,25 @@ let send t frame =
   match Stack.top t.sockets with
   | Some w -> Pipe.write_without_pushback_if_open w frame
   | None -> raise_s [%message "Fake_ws.send: no connection"]
+;;
+
+(* An unmasked, final text frame (server to client). *)
+let encode_text_frame payload =
+  let len = String.length payload in
+  let header =
+    if len < 126
+    then [ 0x81; len ]
+    else if len < 65536
+    then [ 0x81; 126; len lsr 8; len land 0xff ]
+    else 0x81 :: 127 :: List.init 8 ~f:(fun i -> (len lsr (8 * (7 - i))) land 0xff)
+  in
+  String.of_char_list (List.map header ~f:Char.of_int_exn) ^ payload
+;;
+
+let write_raw t bytes =
+  match Stack.top t.writers with
+  | Some w -> Writer.write w bytes
+  | None -> raise_s [%message "Fake_ws.write_raw: no connection"]
 ;;
 
 let drop t =
