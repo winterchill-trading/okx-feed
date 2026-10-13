@@ -3,7 +3,7 @@
    [trades], [bbo] and [funding] cycle through their recorded frames, one frame per run,
    on one normalizer (funding needs its merged state). Book deltas only apply in sequence,
    so [l2 replay] is the whole book recording per run: a fresh normalizer, the ack, the
-   400-level snapshot and 58 deltas (60 frames). *)
+   400-level snapshot and 58 deltas (60 frames). [l2 snapshot] is the snapshot alone. *)
 
 open! Core
 open Core_bench
@@ -38,12 +38,22 @@ let l2_replay () =
     List.iter frames ~f:(run t))
 ;;
 
+(* The 400-level snapshot alone on a fresh normalizer: [l2 replay] minus this is the cost
+   of the ack and the 58 deltas. *)
+let l2_snapshot () =
+  let snapshot =
+    List.find_exn (frames Frames.l2) ~f:(String.is_substring ~substring:{|"snapshot"|})
+  in
+  Bench.Test.create ~name:"l2 snapshot" (fun () -> run (Normalizer.create ()) snapshot)
+;;
+
 let () =
   Command_unix.run
     (Bench.make_command
        [ per_frame "trades" Frames.trades
        ; per_frame "bbo" Frames.bbo
        ; per_frame "funding" Frames.funding
+       ; l2_snapshot ()
        ; l2_replay ()
        ])
 ;;
