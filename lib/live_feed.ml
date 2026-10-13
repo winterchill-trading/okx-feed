@@ -169,7 +169,8 @@ let start_with
         ()
       >>| Or_error.ok_exn
     in
-    if via_messages then don't_wait_for (Pipe.iter_without_pushback (Ws.messages ws) ~f:handle);
+    if via_messages
+    then don't_wait_for (Pipe.iter_without_pushback (Ws.messages ws) ~f:handle);
     ws
   in
   let%bind () =
