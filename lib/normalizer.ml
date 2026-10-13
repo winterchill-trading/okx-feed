@@ -409,12 +409,21 @@ let scanned_book t ~recv_ts s =
     ~l2:(fun kind -> scanned_l2 t ~recv_ts s kind)
 ;;
 
+(* The level arrays start small and grow on the first book that does not fit. *)
+let scan_book scan frame book =
+  scan frame book
+  || (Scan.full book
+      &&
+      (Scan.grow book;
+       scan frame book))
+;;
+
 let frame t ~recv_ts frame =
   if Scan.trade frame t.trade_scan
   then Ok (Output.events [ scanned_trade t ~recv_ts frame ])
-  else if Scan.bbo frame t.book_scan
+  else if scan_book Scan.bbo frame t.book_scan
   then Ok (scanned_bbo t ~recv_ts frame)
-  else if Scan.book frame t.book_scan
+  else if scan_book Scan.book frame t.book_scan
   then Ok (scanned_book t ~recv_ts frame)
   else frame_reference t ~recv_ts frame
 ;;
