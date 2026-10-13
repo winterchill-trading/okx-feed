@@ -167,7 +167,8 @@ framing, delivery, `Normalizer.frame`, pipe writes). arm64, best of 10 runs:
 | release, `OCAMLPARAM='_,O3=1'` | 648 ns, 80.5 words | 584 ns, 67.5 words |
 
 `test/test_delivery.ml` runs both deliveries over every recorded stream and
-requires identical events, gaps and stats, and pins the words per trades
+requires identical events, gaps and stats (gap ordering is covered by
+`test/test_live_feed.ml`, which now runs on `on_message`), and pins the words per trades
 frame end to end (dev profile, pipes drained after the burst: about 139
 before, 126 now, 13 saved; a few words of slack for Linux CI).
 
