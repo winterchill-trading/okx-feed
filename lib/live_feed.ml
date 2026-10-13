@@ -50,7 +50,8 @@ let stats t : Stats.t =
 let feed t = Md.Feed.With_gaps.to_feed t.feed
 let feed_with_gaps t = t.feed
 
-let start
+let start_with
+  ~via_messages
   ?on_raw
   ?(time_source = Time_source.wall_clock ())
   (config : Config.t)
@@ -117,7 +118,11 @@ let start
         Normalizer.reset normalizer;
         gap ~recv_ts ~stream ())
     in
+    (* The connection frames arrive on. [on_connect] runs before each connection's first
+       frame, so it is set before [handle] needs it. *)
+    let current = ref None in
     let on_connect ws =
+      current := Some ws;
       if Ws.reconnects ws > !reported
       then Log.Global.info "okx feed: %s reconnected, resubscribing" name;
       report_reconnect ws ~recv_ts:(Time_source.now time_source);
@@ -127,23 +132,15 @@ let start
       let%bind () = Ws.send ws (Wire.Request.to_string Unsubscribe [ arg ]) in
       Ws.send ws (Wire.Request.to_string Subscribe [ arg ])
     in
-    let%map ws =
-      Ws.connect
-        ~ping:(`Text ("ping", ping_interval))
-        ~on_connect
-        ~log_name:("okx feed " ^ name)
-        ~time_source
-        ~url:config.url
-        ()
-      >>| Or_error.ok_exn
-    in
-    don't_wait_for
-      (Pipe.iter_without_pushback (Ws.messages ws) ~f:(fun frame ->
-         let recv_ts = Time_source.now time_source in
-         t.frames <- t.frames + 1;
-         report_reconnect ws ~recv_ts;
-         Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
-         match Normalizer.frame normalizer ~recv_ts frame with
+    let handle frame =
+      match !current with
+      | None -> ()
+      | Some ws ->
+        let recv_ts = Time_source.now time_source in
+        t.frames <- t.frames + 1;
+        report_reconnect ws ~recv_ts;
+        Option.iter on_raw ~f:(fun on_raw -> on_raw ~stream ~recv_ts frame);
+        (match Normalizer.frame normalizer ~recv_ts frame with
          | Error error ->
            t.parse_errors <- t.parse_errors + 1;
            Log.Global.error_s
@@ -156,7 +153,23 @@ let start
            List.iter events ~f:emit;
            List.iter args ~f:(fun (arg : Wire.Arg.t) ->
              gap ~recv_ts ~stream ~instrument:(Normalizer.instrument arg.inst_id) ();
-             don't_wait_for (resubscribe ws arg))));
+             don't_wait_for (resubscribe ws arg)))
+    in
+    (* [on_message] hands each frame over with no pipe in between; reading [messages] one
+       frame at a time cost about 13 words per frame more (see the README). The pipe path
+       is kept for [For_testing.start_via_messages]. *)
+    let%map ws =
+      Ws.connect
+        ~ping:(`Text ("ping", ping_interval))
+        ~on_connect
+        ?on_message:(if via_messages then None else Some handle)
+        ~log_name:("okx feed " ^ name)
+        ~time_source
+        ~url:config.url
+        ()
+      >>| Or_error.ok_exn
+    in
+    if via_messages then don't_wait_for (Pipe.iter_without_pushback (Ws.messages ws) ~f:handle);
     ws
   in
   let%bind () =
@@ -180,6 +193,12 @@ let start
   in
   return t
 ;;
+
+let start = start_with ~via_messages:false
+
+module For_testing = struct
+  let start_via_messages = start_with ~via_messages:true
+end
 
 let create ?on_raw ?time_source config ~symbols ~streams =
   start ?on_raw ?time_source config ~symbols ~streams >>| feed

@@ -73,6 +73,19 @@ end
 
 val stats : t -> Stats.t
 
+module For_testing : sig
+  (** {!start} with the delivery used before [on_message]: frames are read from
+      {!Venue_net.Ws_client.messages} one at a time. The reference for tests and the
+      bench. *)
+  val start_via_messages
+    :  ?on_raw:(stream:Market_data.Stream.t -> recv_ts:Time_ns.t -> string -> unit)
+    -> ?time_source:Time_source.t
+    -> Config.t
+    -> symbols:string list
+    -> streams:Market_data.Stream.t list
+    -> t Deferred.t
+end
+
 (** The subscriptions of a stream, e.g. [Funding] for [BTC-USDT-SWAP] is [funding-rate]
     and [mark-price] on [BTC-USDT-SWAP] and [index-tickers] on [BTC-USDT]; [Funding]
     ignores symbols that are not perpetual swaps. *)
