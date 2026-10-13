@@ -6,7 +6,13 @@ funding) as a `Market_data.Feed.t`. No API keys, no order entry.
 - `Okx_feed.Config`: the endpoint (`wss://ws.okx.com:8443/ws/v5/public` by default).
 - `Okx_feed.Wire`: JSON shapes of the public channels.
 - `Okx_feed.Normalizer`: pure frame -> `Market_data.Event.t` conversion with
-  per-book sequencing and the funding merge.
+  per-book sequencing and the funding merge. `frame` reads `trades`,
+  `bbo-tbt` and sequenced `books` pushes with `Scan` and decodes everything
+  else with Yojson; `frame_reference` always uses Yojson.
+- `Okx_feed.Scan`: `[@zero_alloc]` readers for those three push shapes into
+  reused records. Any shape they do not recognise (a reordered `arg`, several
+  entries in `data`, escapes, nested objects, numbers they cannot read
+  exactly) returns `false` and falls back to Yojson.
 - `Okx_feed.Live_feed.create ?on_raw ?time_source config ~symbols ~streams`: one
   reconnecting websocket per stream (from `venue-net`). `Live_feed.start` takes
   the same arguments and keeps a handle: `Live_feed.stats` counts frames,
@@ -107,18 +113,38 @@ connection is replaced after the first backoff on a synthetic clock and
 resubscribed).
 
 `dune exec ./bench/main.exe -- -quota 3` times `Normalizer.frame` on the
-recorded frames. On an Apple M-series laptop:
+recorded frames, and `Normalizer.frame_reference` (the Yojson decoder) in the
+`yojson` rows. On an Apple M-series laptop (arm64, `--profile release`, a busy
+machine, so times are rounded; CI runs amd64):
 
-| Bench | Time per run | Minor words per run |
+| Bench | Yojson (before) | Scanned |
 | --- | --- | --- |
-| trades (one frame) | 2.4 us | 431 |
-| bbo (one frame) | 2.5 us | 531 |
-| funding (one frame) | 2.1 us | 399 |
-| l2 replay (60 frames: ack, 400-level snapshot, 58 deltas) | 2.7 ms | 600k |
+| trades (one frame) | 2.4 us, 431 words | 0.48 us, 25 words |
+| bbo (one frame) | 2.6 us, 531 words | 0.46 us, 22 words |
+| funding (one frame, always Yojson) | 2.1 us, 399 words | 2.4 us, 385 words |
+| l2 snapshot (400 levels per side, fresh normalizer) | 0.6 ms, 115k words | 0.11 ms, 5.0k words |
+| l2 replay (60 frames: ack, snapshot, 58 deltas) | 2.7 ms, 600k words | 0.51 ms, 31k words |
 
-`test/test_allocation.ml` pins minor words per message (trades about 427,
-bbo 528, funding 396, books 10k on average and 115k for the snapshot), within
-2% because counts differ slightly between macOS and Linux.
+The dev profile and release with `OCAMLPARAM='_,O3=1'` give the same words
+and times within the machine's noise (dev: trades 0.52 us, l2 replay 0.6 to
+1.6 ms; O3: trades 0.46 us, l2 replay 0.45 ms). What remains on the scanned
+path is the output itself: the event record, its list cell, `Ok` and the
+trade id string for a trade, 6 words per level for a book. The snapshot also
+allocates the 2 x 1024-level scratch once per normalizer (major heap, 4.1k
+words). Funding dropped 14 words per frame when `index-tickers` stopped
+sorting every known swap on each push.
+
+`Scan.trade`, `Scan.bbo` and `Scan.book` allocate nothing: they are checked
+`[@zero_alloc]` and `test/test_scan.ml` pins 0 words per call.
+`test/test_allocation.ml` pins minor words per message on the recorded
+minute (trades about 22, bbo 18, books 511 on average and 4844 for the
+snapshot, funding 382; the largest trades and bbo message is the subscription
+ack at 209), within 2% because counts differ slightly between macOS and Linux.
+`test/test_scanned_path.ml` runs both paths over every recorded frame (149 of
+150 trades frames, 249 of 250 bbo frames and 59 of 60 books frames are
+scanned; acks fall back) and over hand-written sequencing cases (gap, reset,
+heartbeat, unsorted snapshot, several symbols, empty side, unknown side) and
+requires identical output.
 
 ## Symbol conventions
 
