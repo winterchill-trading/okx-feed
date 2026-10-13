@@ -1,6 +1,13 @@
-(executable
- (name main)
- (libraries core core_unix.command_unix core_bench okx-feed)
+(executables
+ (names main live)
+ (libraries
+  core
+  core_unix.command_unix
+  core_bench
+  async
+  okx-feed
+  okx_feed_test
+  market-data)
  (preprocess
   (pps ppx_jane)))
 
