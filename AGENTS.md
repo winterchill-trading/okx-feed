@@ -62,7 +62,7 @@ the shared `obj-magic` workflow. Check a run with `gh run list --limit 1`, then 
 ## Pitfalls
 
 - OKX `seqId` exceeds 2^31, so sequence numbers are 63-bit OCaml ints.
-- OKX and the other feeds want the plain text frame `ping` answered by `pong`, not a JSON message.
+- OKX wants the plain text frame `ping`, answered by a text `pong`, not a JSON keepalive.
 - A reconnect gap is stamped at the reconnect, about 0.6 s after the drop, and precedes the first
   frame of the new socket.
 - A book sequence break costs one unsubscribe and subscribe round trip.
